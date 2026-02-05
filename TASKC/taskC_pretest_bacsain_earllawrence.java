@@ -53,6 +53,7 @@ public class taskC_pretest_bacsain_earllawrence {
     4. Use substring() or StringBuilder to collect characters into words and print them.*/
 
     private static void stringManipulator(String string) {
+
         int index = 0;
         int i, len = string.length();
         for(i = 0; i < len; i++){
@@ -60,12 +61,14 @@ public class taskC_pretest_bacsain_earllawrence {
             char condition = ';';
             char spaceCondition = ' ';
 
-            if (c == condition) {
-                System.out.println("END_OF_STATEMENT");
-            } else if (index < i){
-                System.out.println(string.substring(index, i));
-            }else {
-                System.out.println("Character at " + i + " is: " + c);
+            if (c == condition || c == spaceCondition) {
+                if (index < i) {
+                    System.out.println(string.substring(index, i));
+                }
+                if (c == condition) {
+                    System.out.println("END_OF_STATEMENT");
+                }
+                index = i + 1;
             }
         }
     }
