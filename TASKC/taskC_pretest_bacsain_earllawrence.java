@@ -14,6 +14,8 @@ public class taskC_pretest_bacsain_earllawrence {
         System.out.println("=================================================");
         System.out.println("TASK 2");
         stringManipulator("int count = 0;");
+        System.out.println("=================================================");
+        System.out.println("TASK 3");
     }
 
     //TASK 1: FILE HANDLING
@@ -56,6 +58,7 @@ public class taskC_pretest_bacsain_earllawrence {
 
         int index = 0;
         int i, len = string.length();
+        
         for(i = 0; i < len; i++){
             char c = string.charAt(i);
             char condition = ';';
@@ -70,6 +73,29 @@ public class taskC_pretest_bacsain_earllawrence {
                 }
                 index = i + 1;
             }
+        }
+    }
+    
+   
+    //TASK 3: Conditional Statements
+    /* Now that you have the "words," you must categorize them.
+    1. Create a method public String classify(String text).
+    2. Use Conditional (if-else/switch) statements to return:
+    ○ "NUMBER" if the word is numeric (e.g., 123).
+    ○ "IDENTIFIER" if it starts with a letter.
+    ○ "OPERATOR" if it is +, -, *, or /.
+    3. Iterate through your array from Task 1 and classify every word found.
+    My notes: so getting the words from task 1, then passing it to task 2, the task 3
+    will categorize it?
+    */
+
+    private static String classify(String text){
+       if(text.matches("\\d+")) {
+            return "NUMBER";
+       } else if (text.matches("[a-zA-Z]\\w*")) {
+            return "IDENTIFIER";
+        } else {
+            return "OPERATOR";
         }
     }
 }
