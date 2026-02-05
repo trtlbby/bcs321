@@ -53,21 +53,19 @@ public class taskC_pretest_bacsain_earllawrence {
     4. Use substring() or StringBuilder to collect characters into words and print them.*/
 
     private static void stringManipulator(String string) {
-        String str;
-        str = string;
-
-        int i, len = str.length();
+        int index = 0;
+        int i, len = string.length();
         for(i = 0; i < len; i++){
-            char characters = str.charAt(i);
+            char c = string.charAt(i);
             char condition = ';';
-            char spaceCondition = " ";
+            char spaceCondition = ' ';
 
-            if (str.charAt(i) == condition) {
+            if (c == condition) {
                 System.out.println("END_OF_STATEMENT");
-            } else if (str.charAt(i) == spaceCondition){
-                continue;
+            } else if (index < i){
+                System.out.println(string.substring(index, i));
             }else {
-                System.out.println("Character at " + i + " is: " + characters);
+                System.out.println("Character at " + i + " is: " + c);
             }
         }
     }
