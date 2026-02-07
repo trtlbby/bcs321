@@ -33,7 +33,7 @@ public class inclass01a_bacsain_earllawrence {
             System.out.printf("The string: %s is valid", input);
 
        }else {System.out.printf("The string %s is not valid", input);}
-        
+       sc.close(); 
     }
     
 }
