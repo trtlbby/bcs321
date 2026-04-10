@@ -4,9 +4,6 @@ import java.nio.file.Path;
 import java.util.List;
 
 public class Lexer {
-    public static void main(String[] args) throws Exception {
-        process(args);
-    }
 
     public static List<Token> tokenize(String source) {
         Scanner scanner = new Scanner(source);
@@ -26,16 +23,6 @@ public class Lexer {
         for (Token token : tokens) {
             System.out.println(token.formatRow());
         }
-    }
-
-    public static void process(String[] args) throws Exception {
-        if (args == null || args.length == 0) {
-            System.out.println("Usage: java App <input.lua>");
-            return;
-        }
-        String source = readSource(args[0]);
-        List<Token> tokens = tokenize(source);
-        printTokens(tokens);
     }
 
     /**
