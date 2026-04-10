@@ -1,0 +1,15 @@
+public enum TokenType {
+    KEYWORD,
+    BOOLEAN_LITERAL,
+    NIL,
+    IDENTIFIER,
+    INTEGER_LITERAL,
+    FLOAT_LITERAL,
+    HEX_LITERAL,
+    STRING_LITERAL,
+    OPERATOR,
+    LOGICAL_OP,
+    DELIMITER,
+    EOF,
+    ERROR
+}
