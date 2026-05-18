@@ -21,7 +21,9 @@ local nothing = nil
 if not flag and y >= 1 or y < 5 then
     result = "ok" .. "!"
 end
+bad ~ good
 tbl.key = y
 list = {1,2,3};
 arr[1] = y
 if y <= 10 then tbl:method(x) end
+
