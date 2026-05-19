@@ -63,10 +63,10 @@ public class ParseNode {
             boolean last = (i == kids.size() - 1);
             ParseNode child = kids.get(i);
 
-            System.out.println(prefix + (last ? "└── " : "├── ") + child.headerText());
+            System.out.println(prefix + (last ? "\\-- " : "+-- ") + child.headerText());
 
             // recurse with extended prefix
-            String childPrefix = prefix + (last ? "    " : "│   ");
+            String childPrefix = prefix + (last ? "    " : "|   ");
             printChildren(child, childPrefix);
         }
     }
