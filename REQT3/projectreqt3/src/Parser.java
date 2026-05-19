@@ -2,269 +2,358 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Parser {
+
     private final List<Token> tokens;
     private int pos = 0;
-    private final List<String> errors = new ArrayList<>();
+    private int lastLine = 1;
+    private boolean lastPrefixWasCall = false;
+
+    private final List<String> errors     = new ArrayList<>();
+    private final List<String> lineReport = new ArrayList<>();
+    private ParseNode root = null;
 
     public Parser(List<Token> tokens) {
         this.tokens = tokens;
     }
 
+    // ── Public API ────────────────────────────────────────────────────────────
+
     public boolean parse() {
-        block();
-        if (current().getType() != TokenType.EOF) {
-            error("unexpected token '" + current().getLexeme() + "'");
+        root = new ParseNode("program");
+        root.addChild(block());
+        Token eof = current();
+        if (eof.getType() == TokenType.EOF) {
+            root.addChild(new ParseNode("EOF", eof.getLine()));
+        } else {
+            error("unexpected token '" + eof.getLexeme() + "'");
         }
         return errors.isEmpty();
     }
 
-    public List<String> getErrors() {
-        return errors;
+    public ParseNode getTree() { return root; }
+
+    public void printTree() {
+        if (root != null) {
+            ParseNode.printTree(root);
+        } else {
+            System.out.println("(no tree — call parse() first)");
+        }
     }
+
+    public void printLineReport() {
+        System.out.println("Line-by-line report (" + lineReport.size() + " statement(s)):");
+        if (lineReport.isEmpty()) {
+            System.out.println("  (no statements found)");
+        } else {
+            for (String entry : lineReport) {
+                System.out.println("  " + entry);
+            }
+        }
+    }
+
+    public List<String> getErrors() { return errors; }
 
     public void printResult() {
         if (errors.isEmpty()) {
             System.out.println("Syntax analysis: OK");
         } else {
             System.out.println("Syntax analysis: FAILED");
-            for (String e : errors) {
-                System.out.println("  " + e);
-            }
+            for (String e : errors) System.out.println("  " + e);
         }
     }
 
-    // --- block and statements ---
+    // ── Block and statements ──────────────────────────────────────────────────
 
-    private void block() {
+    private ParseNode block() {
+        ParseNode node = new ParseNode("block");
         while (!isBlockEnd() && current().getType() != TokenType.EOF) {
-            statement();
+            int startLine  = current().getLine();
+            int errsBefore = errors.size();
+            ParseNode stmt = statement();
+            int endLine    = lastLine;
+            boolean ok     = errors.size() == errsBefore;
+            node.addChild(stmt);
+            String range = (startLine == endLine)
+                    ? "Line  " + startLine
+                    : "Lines " + startLine + "-" + endLine;
+            lineReport.add(String.format("%-14s %-20s -> %s",
+                    range + ":", stmt.getLabel(), ok ? "OK" : "SYNTAX ERROR"));
         }
+        return node;
     }
 
     private boolean isBlockEnd() {
         if (current().getType() != TokenType.KEYWORD) return false;
         String kw = current().getLexeme();
-        return "end".equals(kw) || "else".equals(kw) || "elseif".equals(kw) || "until".equals(kw);
+        return "end".equals(kw) || "else".equals(kw)
+                || "elseif".equals(kw) || "until".equals(kw);
     }
 
-    private void statement() {
+    private ParseNode statement() {
         Token t = current();
 
-        // skip semicolons
         if (t.getType() == TokenType.DELIMITER && ";".equals(t.getLexeme())) {
-            advance();
-            return;
+            return advanceLeaf();
         }
 
         if (t.getType() == TokenType.KEYWORD) {
             switch (t.getLexeme()) {
-                case "local":    localDecl(); return;
-                case "if":       ifStmt(); return;
-                case "for":      forStmt(); return;
-                case "while":    whileStmt(); return;
-                case "repeat":   repeatStmt(); return;
-                case "function": funcDecl(); return;
-                case "return":   returnStmt(); return;
+                case "local":    return localDecl();
+                case "if":       return ifStmt();
+                case "for":      return forStmt();
+                case "while":    return whileStmt();
+                case "repeat":   return repeatStmt();
+                case "function": return funcDecl();
+                case "return":   return returnStmt();
             }
         }
 
         if (t.getType() == TokenType.ERROR) {
             error("invalid token '" + t.getLexeme() + "'");
-            advance();
-            return;
+            return advanceLeaf();
         }
 
-        // assignment or function call — both start with a prefix expression
         if (t.getType() == TokenType.IDENTIFIER) {
-            exprStatement();
-            return;
+            return exprStatement();
         }
 
         error("unexpected token '" + t.getLexeme() + "'");
-        advance();
+        return advanceLeaf();
     }
 
-    // parse IDENTIFIER suffixes then decide: assignment if '=' follows, else must be a call
-    private void exprStatement() {
-        int startPos = pos;
-        boolean hadCall = prefixExpr();
+    // assignment or function call — both start with a prefix expression
+    private ParseNode exprStatement() {
+        ParseNode prefNode = prefixExpr();
+        boolean wasCall = lastPrefixWasCall;
 
         if (check(TokenType.OPERATOR, "=")) {
-            advance(); // consume '='
-            expression();
-        } else if (!hadCall) {
-            error("expected assignment or function call");
+            ParseNode assign = new ParseNode("assign");
+            assign.addChild(prefNode);
+            assign.addChild(advanceLeaf()); // '='
+            assign.addChild(expression());
+            return assign;
         }
+        if (wasCall) {
+            ParseNode call = new ParseNode("call");
+            call.addChild(prefNode);
+            return call;
+        }
+        error("expected assignment or function call");
+        ParseNode errNode = new ParseNode("error-stmt");
+        errNode.addChild(prefNode);
+        return errNode;
     }
 
-    // returns true if the expression ended with a function-call suffix
-    private boolean prefixExpr() {
-        expect(TokenType.IDENTIFIER, "identifier");
-        boolean lastWasCall = false;
+    // parse identifier followed by optional suffixes (., [], :method(), ())
+    private ParseNode prefixExpr() {
+        ParseNode node = new ParseNode("prefix");
+        node.addChild(expectLeaf(TokenType.IDENTIFIER, "identifier"));
+        lastPrefixWasCall = false;
         while (true) {
             if (check(TokenType.DELIMITER, ".")) {
-                advance();
-                expect(TokenType.IDENTIFIER, "field name");
-                lastWasCall = false;
+                node.addChild(advanceLeaf());                            // '.'
+                node.addChild(expectLeaf(TokenType.IDENTIFIER, "field name"));
+                lastPrefixWasCall = false;
             } else if (check(TokenType.DELIMITER, "[")) {
-                advance();
-                expression();
-                expect(TokenType.DELIMITER, "]", "']'");
-                lastWasCall = false;
+                node.addChild(advanceLeaf());                            // '['
+                node.addChild(expression());
+                node.addChild(expectLeaf(TokenType.DELIMITER, "]", "']'"));
+                lastPrefixWasCall = false;
             } else if (check(TokenType.DELIMITER, ":")) {
-                advance();
-                expect(TokenType.IDENTIFIER, "method name");
-                expect(TokenType.DELIMITER, "(", "'('");
-                argList();
-                expect(TokenType.DELIMITER, ")", "')'");
-                lastWasCall = true;
+                node.addChild(advanceLeaf());                            // ':'
+                node.addChild(expectLeaf(TokenType.IDENTIFIER, "method name"));
+                node.addChild(expectLeaf(TokenType.DELIMITER, "(", "'('"));
+                node.addChild(argList());
+                node.addChild(expectLeaf(TokenType.DELIMITER, ")", "')'"));
+                lastPrefixWasCall = true;
             } else if (check(TokenType.DELIMITER, "(")) {
-                advance();
-                argList();
-                expect(TokenType.DELIMITER, ")", "')'");
-                lastWasCall = true;
+                node.addChild(advanceLeaf());                            // '('
+                node.addChild(argList());
+                node.addChild(expectLeaf(TokenType.DELIMITER, ")", "')'"));
+                lastPrefixWasCall = true;
             } else {
                 break;
             }
         }
-        return lastWasCall;
+        // collapse: no suffixes → return just the identifier leaf
+        if (node.getChildren().size() == 1) {
+            return node.getChildren().get(0);
+        }
+        return node;
     }
 
-    private void argList() {
-        if (check(TokenType.DELIMITER, ")")) return;
-        expression();
+    private ParseNode argList() {
+        ParseNode node = new ParseNode("args");
+        if (check(TokenType.DELIMITER, ")")) return node;
+        node.addChild(expression());
         while (check(TokenType.DELIMITER, ",")) {
-            advance();
-            expression();
+            node.addChild(advanceLeaf()); // ','
+            node.addChild(expression());
         }
+        return node;
     }
 
-    // --- specific statements ---
+    // ── Specific statements ───────────────────────────────────────────────────
 
-    private void localDecl() {
-        advance(); // consume 'local'
-        if (check(TokenType.KEYWORD, "function")) {
-            advance(); // consume 'function'
-            expect(TokenType.IDENTIFIER, "function name");
-            expect(TokenType.DELIMITER, "(", "'('");
-            paramList();
-            expect(TokenType.DELIMITER, ")", "')'");
-            block();
-            expectKeyword("end");
-            return;
+    private ParseNode localDecl() {
+        // peek ahead to choose the node label before consuming 'local'
+        boolean isFunc = pos + 1 < tokens.size()
+                && tokens.get(pos + 1).getType() == TokenType.KEYWORD
+                && "function".equals(tokens.get(pos + 1).getLexeme());
+
+        ParseNode node = new ParseNode(isFunc ? "local-func" : "local-decl");
+        node.addChild(advanceLeaf()); // 'local'
+
+        if (isFunc) {
+            node.addChild(advanceLeaf()); // 'function'
+            node.addChild(expectLeaf(TokenType.IDENTIFIER, "function name"));
+            node.addChild(expectLeaf(TokenType.DELIMITER, "(", "'('"));
+            node.addChild(paramList());
+            node.addChild(expectLeaf(TokenType.DELIMITER, ")", "')'"));
+            node.addChild(block());
+            node.addChild(expectKeywordLeaf("end"));
+            return node;
         }
-        expect(TokenType.IDENTIFIER, "variable name");
+        node.addChild(expectLeaf(TokenType.IDENTIFIER, "variable name"));
         if (check(TokenType.OPERATOR, "=")) {
-            advance();
-            expression();
+            node.addChild(advanceLeaf()); // '='
+            node.addChild(expression());
         }
+        return node;
     }
 
-    private void ifStmt() {
-        advance(); // consume 'if'
-        expression();
-        expectKeyword("then");
-        block();
+    private ParseNode ifStmt() {
+        ParseNode node = new ParseNode("if-stmt");
+        node.addChild(advanceLeaf()); // 'if'
+        node.addChild(expression());
+        node.addChild(expectKeywordLeaf("then"));
+        node.addChild(block());
         while (check(TokenType.KEYWORD, "elseif")) {
-            advance();
-            expression();
-            expectKeyword("then");
-            block();
+            ParseNode branch = new ParseNode("elseif-branch");
+            branch.addChild(advanceLeaf()); // 'elseif'
+            branch.addChild(expression());
+            branch.addChild(expectKeywordLeaf("then"));
+            branch.addChild(block());
+            node.addChild(branch);
         }
         if (check(TokenType.KEYWORD, "else")) {
-            advance();
-            block();
+            ParseNode branch = new ParseNode("else-branch");
+            branch.addChild(advanceLeaf()); // 'else'
+            branch.addChild(block());
+            node.addChild(branch);
         }
-        expectKeyword("end");
+        node.addChild(expectKeywordLeaf("end"));
+        return node;
     }
 
-    private void forStmt() {
-        advance(); // consume 'for'
-        expect(TokenType.IDENTIFIER, "variable name");
-        expect(TokenType.OPERATOR, "=", "'='");
-        expression();
-        expect(TokenType.DELIMITER, ",", "','");
-        expression();
+    private ParseNode forStmt() {
+        ParseNode node = new ParseNode("for-stmt");
+        node.addChild(advanceLeaf()); // 'for'
+        node.addChild(expectLeaf(TokenType.IDENTIFIER, "variable name"));
+        node.addChild(expectLeaf(TokenType.OPERATOR, "=", "'='"));
+        node.addChild(expression());
+        node.addChild(expectLeaf(TokenType.DELIMITER, ",", "','"));
+        node.addChild(expression());
         if (check(TokenType.DELIMITER, ",")) {
-            advance();
-            expression();
+            node.addChild(advanceLeaf()); // optional step ','
+            node.addChild(expression());
         }
-        expectKeyword("do");
-        block();
-        expectKeyword("end");
+        node.addChild(expectKeywordLeaf("do"));
+        node.addChild(block());
+        node.addChild(expectKeywordLeaf("end"));
+        return node;
     }
 
-    private void whileStmt() {
-        advance(); // consume 'while'
-        expression();
-        expectKeyword("do");
-        block();
-        expectKeyword("end");
+    private ParseNode whileStmt() {
+        ParseNode node = new ParseNode("while-stmt");
+        node.addChild(advanceLeaf()); // 'while'
+        node.addChild(expression());
+        node.addChild(expectKeywordLeaf("do"));
+        node.addChild(block());
+        node.addChild(expectKeywordLeaf("end"));
+        return node;
     }
 
-    private void repeatStmt() {
-        advance(); // consume 'repeat'
-        block();
-        expectKeyword("until");
-        expression();
+    private ParseNode repeatStmt() {
+        ParseNode node = new ParseNode("repeat-stmt");
+        node.addChild(advanceLeaf()); // 'repeat'
+        node.addChild(block());
+        node.addChild(expectKeywordLeaf("until"));
+        node.addChild(expression());
+        return node;
     }
 
-    private void funcDecl() {
-        advance(); // consume 'function'
-        expect(TokenType.IDENTIFIER, "function name");
-        expect(TokenType.DELIMITER, "(", "'('");
-        paramList();
-        expect(TokenType.DELIMITER, ")", "')'");
-        block();
-        expectKeyword("end");
+    private ParseNode funcDecl() {
+        ParseNode node = new ParseNode("func-decl");
+        node.addChild(advanceLeaf()); // 'function'
+        node.addChild(expectLeaf(TokenType.IDENTIFIER, "function name"));
+        node.addChild(expectLeaf(TokenType.DELIMITER, "(", "'('"));
+        node.addChild(paramList());
+        node.addChild(expectLeaf(TokenType.DELIMITER, ")", "')'"));
+        node.addChild(block());
+        node.addChild(expectKeywordLeaf("end"));
+        return node;
     }
 
-    private void paramList() {
-        if (check(TokenType.DELIMITER, ")")) return;
-        expect(TokenType.IDENTIFIER, "parameter name");
+    private ParseNode paramList() {
+        ParseNode node = new ParseNode("params");
+        if (check(TokenType.DELIMITER, ")")) return node;
+        node.addChild(expectLeaf(TokenType.IDENTIFIER, "parameter name"));
         while (check(TokenType.DELIMITER, ",")) {
-            advance();
-            expect(TokenType.IDENTIFIER, "parameter name");
+            node.addChild(advanceLeaf()); // ','
+            node.addChild(expectLeaf(TokenType.IDENTIFIER, "parameter name"));
         }
+        return node;
     }
 
-    private void returnStmt() {
-        advance(); // consume 'return'
-        // return may have no value at end of block
+    private ParseNode returnStmt() {
+        ParseNode node = new ParseNode("return-stmt");
+        node.addChild(advanceLeaf()); // 'return'
         if (!isBlockEnd() && current().getType() != TokenType.EOF
                 && !(current().getType() == TokenType.DELIMITER && ";".equals(current().getLexeme()))) {
-            expression();
+            node.addChild(expression());
         }
+        return node;
     }
 
-    // --- expressions (precedence climbing) ---
+    // ── Expressions (precedence climbing) ────────────────────────────────────
 
-    private void expression() {
-        orExpr();
-    }
+    private ParseNode expression() { return orExpr(); }
 
-    private void orExpr() {
-        andExpr();
+    private ParseNode orExpr() {
+        ParseNode left = andExpr();
+        if (!check(TokenType.LOGICAL_OP, "or")) return left;
+        ParseNode node = new ParseNode("or-expr");
+        node.addChild(left);
         while (check(TokenType.LOGICAL_OP, "or")) {
-            advance();
-            andExpr();
+            node.addChild(advanceLeaf());
+            node.addChild(andExpr());
         }
+        return node;
     }
 
-    private void andExpr() {
-        compExpr();
+    private ParseNode andExpr() {
+        ParseNode left = compExpr();
+        if (!check(TokenType.LOGICAL_OP, "and")) return left;
+        ParseNode node = new ParseNode("and-expr");
+        node.addChild(left);
         while (check(TokenType.LOGICAL_OP, "and")) {
-            advance();
-            compExpr();
+            node.addChild(advanceLeaf());
+            node.addChild(compExpr());
         }
+        return node;
     }
 
-    private void compExpr() {
-        concatExpr();
+    private ParseNode compExpr() {
+        ParseNode left = concatExpr();
+        if (!isComparison()) return left;
+        ParseNode node = new ParseNode("comp-expr");
+        node.addChild(left);
         while (isComparison()) {
-            advance();
-            concatExpr();
+            node.addChild(advanceLeaf());
+            node.addChild(concatExpr());
         }
+        return node;
     }
 
     private boolean isComparison() {
@@ -274,21 +363,28 @@ public class Parser {
                 || ">=".equals(op) || "==".equals(op) || "~=".equals(op);
     }
 
-    private void concatExpr() {
-        addExpr();
-        // '..' is right-associative but for validation we just loop
+    private ParseNode concatExpr() {
+        ParseNode left = addExpr();
+        if (!check(TokenType.OPERATOR, "..")) return left;
+        ParseNode node = new ParseNode("concat-expr");
+        node.addChild(left);
         while (check(TokenType.OPERATOR, "..")) {
-            advance();
-            addExpr();
+            node.addChild(advanceLeaf());
+            node.addChild(addExpr());
         }
+        return node;
     }
 
-    private void addExpr() {
-        mulExpr();
+    private ParseNode addExpr() {
+        ParseNode left = mulExpr();
+        if (!isAddOp()) return left;
+        ParseNode node = new ParseNode("add-expr");
+        node.addChild(left);
         while (isAddOp()) {
-            advance();
-            mulExpr();
+            node.addChild(advanceLeaf());
+            node.addChild(mulExpr());
         }
+        return node;
     }
 
     private boolean isAddOp() {
@@ -297,12 +393,16 @@ public class Parser {
         return "+".equals(op) || "-".equals(op);
     }
 
-    private void mulExpr() {
-        unaryExpr();
+    private ParseNode mulExpr() {
+        ParseNode left = unaryExpr();
+        if (!isMulOp()) return left;
+        ParseNode node = new ParseNode("mul-expr");
+        node.addChild(left);
         while (isMulOp()) {
-            advance();
-            unaryExpr();
+            node.addChild(advanceLeaf());
+            node.addChild(unaryExpr());
         }
+        return node;
     }
 
     private boolean isMulOp() {
@@ -311,23 +411,24 @@ public class Parser {
         return "*".equals(op) || "/".equals(op) || "%".equals(op) || "^".equals(op);
     }
 
-    private void unaryExpr() {
+    private ParseNode unaryExpr() {
         if (check(TokenType.LOGICAL_OP, "not")) {
-            advance();
-            unaryExpr();
-            return;
+            ParseNode node = new ParseNode("unary-expr");
+            node.addChild(advanceLeaf());  // 'not'
+            node.addChild(unaryExpr());
+            return node;
         }
         if (check(TokenType.OPERATOR, "-")) {
-            advance();
-            unaryExpr();
-            return;
+            ParseNode node = new ParseNode("unary-expr");
+            node.addChild(advanceLeaf());  // '-'
+            node.addChild(unaryExpr());
+            return node;
         }
-        primary();
+        return primary();
     }
 
-    private void primary() {
+    private ParseNode primary() {
         Token t = current();
-
         switch (t.getType()) {
             case INTEGER_LITERAL:
             case FLOAT_LITERAL:
@@ -335,52 +436,64 @@ public class Parser {
             case STRING_LITERAL:
             case BOOLEAN_LITERAL:
             case NIL:
-                advance();
-                return;
+                return advanceLeaf();
             case IDENTIFIER:
-                prefixExpr();
-                return;
+                return prefixExpr();
             case DELIMITER:
                 if ("(".equals(t.getLexeme())) {
-                    advance();
-                    expression();
-                    expect(TokenType.DELIMITER, ")", "')'");
-                    return;
+                    ParseNode node = new ParseNode("group");
+                    node.addChild(advanceLeaf()); // '('
+                    node.addChild(expression());
+                    node.addChild(expectLeaf(TokenType.DELIMITER, ")", "')'"));
+                    return node;
                 }
                 if ("{".equals(t.getLexeme())) {
-                    tableConstructor();
-                    return;
+                    return tableConstructor();
                 }
                 break;
             default:
                 break;
         }
         error("expected expression, got '" + t.getLexeme() + "'");
-        advance();
+        return advanceLeaf();
     }
 
-    private void tableConstructor() {
-        advance(); // consume '{'
+    private ParseNode tableConstructor() {
+        ParseNode node = new ParseNode("table");
+        node.addChild(advanceLeaf()); // '{'
         if (!check(TokenType.DELIMITER, "}")) {
-            expression();
+            node.addChild(expression());
             while (check(TokenType.DELIMITER, ",") || check(TokenType.DELIMITER, ";")) {
-                advance();
+                node.addChild(advanceLeaf());
                 if (check(TokenType.DELIMITER, "}")) break;
-                expression();
+                node.addChild(expression());
             }
         }
-        expect(TokenType.DELIMITER, "}", "'}'");
+        node.addChild(expectLeaf(TokenType.DELIMITER, "}", "'}'"));
+        return node;
     }
 
-    // --- helpers ---
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Token current() {
-        if (pos >= tokens.size()) return tokens.get(tokens.size() - 1); // EOF
+        if (pos >= tokens.size()) return tokens.get(tokens.size() - 1);
         return tokens.get(pos);
     }
 
+    /** Raw advance used by recover(); does not return a node. */
     private void advance() {
+        if (pos < tokens.size() - 1) {
+            lastLine = current().getLine();
+            pos++;
+        }
+    }
+
+    /** Consume current token, record its line, and return it as a leaf node. */
+    private ParseNode advanceLeaf() {
+        Token t = current();
+        lastLine = t.getLine();
         if (pos < tokens.size() - 1) pos++;
+        return new ParseNode(t.getLexeme(), t.getLine());
     }
 
     private boolean check(TokenType type, String lexeme) {
@@ -388,40 +501,32 @@ public class Parser {
         return t.getType() == type && lexeme.equals(t.getLexeme());
     }
 
-    private void expect(TokenType type, String description) {
-        if (current().getType() == type) {
-            advance();
-        } else {
-            error("expected " + description + ", got '" + current().getLexeme() + "'");
-        }
+    private ParseNode expectLeaf(TokenType type, String description) {
+        if (current().getType() == type) return advanceLeaf();
+        error("expected " + description + ", got '" + current().getLexeme() + "'");
+        return new ParseNode("<missing " + description + ">");
     }
 
-    private void expect(TokenType type, String lexeme, String description) {
-        if (check(type, lexeme)) {
-            advance();
-        } else {
-            error("expected " + description + ", got '" + current().getLexeme() + "'");
-        }
+    private ParseNode expectLeaf(TokenType type, String lexeme, String description) {
+        if (check(type, lexeme)) return advanceLeaf();
+        error("expected " + description + ", got '" + current().getLexeme() + "'");
+        return new ParseNode("<missing " + description + ">");
     }
 
-    private void expectKeyword(String kw) {
-        if (check(TokenType.KEYWORD, kw)) {
-            advance();
-        } else {
-            error("expected '" + kw + "', got '" + current().getLexeme() + "'");
-        }
+    private ParseNode expectKeywordLeaf(String kw) {
+        if (check(TokenType.KEYWORD, kw)) return advanceLeaf();
+        error("expected '" + kw + "', got '" + current().getLexeme() + "'");
+        return new ParseNode("<missing '" + kw + "'>");
     }
 
     private void error(String message) {
         errors.add("Line " + current().getLine() + ": " + message);
-        // panic-mode recovery: skip to next statement-starting token
         recover();
     }
 
     private void recover() {
         while (current().getType() != TokenType.EOF) {
             Token t = current();
-            // stop at statement-starting keywords
             if (t.getType() == TokenType.KEYWORD) {
                 String kw = t.getLexeme();
                 if ("local".equals(kw) || "if".equals(kw) || "for".equals(kw) || "while".equals(kw)
@@ -430,8 +535,8 @@ public class Parser {
                     return;
                 }
             }
-            // stop at next identifier that starts a line (heuristic: different line)
-            if (t.getType() == TokenType.IDENTIFIER && pos > 0 && tokens.get(pos - 1).getLine() < t.getLine()) {
+            if (t.getType() == TokenType.IDENTIFIER && pos > 0
+                    && tokens.get(pos - 1).getLine() < t.getLine()) {
                 return;
             }
             advance();
