@@ -1,6 +1,8 @@
 import java.util.List;
 
 public class App {
+    private static final String SEP = "=".repeat(62);
+
     public static void main(String[] args) throws Exception {
         if (args.length < 2) {
             System.out.println("Usage: java App <mode> <input.lua>");
@@ -23,11 +25,22 @@ public class App {
             case "parse":
                 Parser parser = new Parser(tokens);
                 parser.parse();
+                printSection("PARSE TREE");
+                parser.printTree();
+                printSection("LINE-BY-LINE REPORT");
+                parser.printLineReport();
+                printSection("SYNTAX ANALYSIS RESULT");
                 parser.printResult();
                 break;
             default:
                 System.out.println("Unknown mode: " + mode);
                 System.out.println("Modes: tokens, symbols, parse");
         }
+    }
+
+    private static void printSection(String title) {
+        System.out.println(SEP);
+        System.out.println(title);
+        System.out.println(SEP);
     }
 }
