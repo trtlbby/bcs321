@@ -8,7 +8,7 @@ public class Parser {
     private int lastLine = 1;
     private boolean lastPrefixWasCall = false;
 
-    private final List<String> errors     = new ArrayList<>();
+    private final ErrorHandler errorHandler = new ErrorHandler();
     private final List<String> lineReport = new ArrayList<>();
     private ParseNode root = null;
 
@@ -25,9 +25,9 @@ public class Parser {
         if (eof.getType() == TokenType.EOF) {
             root.addChild(new ParseNode("EOF", eof.getLine()));
         } else {
-            error("unexpected token '" + eof.getLexeme() + "'");
+            errorExpected("EOF");
         }
-        return errors.isEmpty();
+        return !errorHandler.hasErrors();
     }
 
     public ParseNode getTree() { return root; }
@@ -51,14 +51,18 @@ public class Parser {
         }
     }
 
-    public List<String> getErrors() { return errors; }
+    public List<String> getErrors() { return errorHandler.getMessages(); }
+
+    public List<SyntaxError> getSyntaxErrors() { return errorHandler.getSyntaxErrors(); }
 
     public void printResult() {
-        if (errors.isEmpty()) {
+        if (!errorHandler.hasErrors()) {
             System.out.println("Syntax analysis: OK");
         } else {
             System.out.println("Syntax analysis: FAILED");
-            for (String e : errors) System.out.println("  " + e);
+            for (String error : errorHandler.getMessages()) {
+                System.out.println("  " + error);
+            }
         }
     }
 
@@ -68,10 +72,10 @@ public class Parser {
         ParseNode node = new ParseNode("block");
         while (!isBlockEnd() && current().getType() != TokenType.EOF) {
             int startLine  = current().getLine();
-            int errsBefore = errors.size();
+            int errsBefore = errorHandler.size();
             ParseNode stmt = statement();
             int endLine    = lastLine;
-            boolean ok     = errors.size() == errsBefore;
+            boolean ok     = errorHandler.size() == errsBefore;
             node.addChild(stmt);
             String range = (startLine == endLine)
                     ? "Line  " + startLine
@@ -109,7 +113,7 @@ public class Parser {
         }
 
         if (t.getType() == TokenType.ERROR) {
-            error("invalid token '" + t.getLexeme() + "'");
+            errorInvalid();
             return advanceLeaf();
         }
 
@@ -117,7 +121,7 @@ public class Parser {
             return exprStatement();
         }
 
-        error("unexpected token '" + t.getLexeme() + "'");
+        errorExpected("statement");
         return advanceLeaf();
     }
 
@@ -138,7 +142,7 @@ public class Parser {
             call.addChild(prefNode);
             return call;
         }
-        error("expected assignment or function call");
+        errorExpected("assignment or function call");
         ParseNode errNode = new ParseNode("error-stmt");
         errNode.addChild(prefNode);
         return errNode;
@@ -454,7 +458,7 @@ public class Parser {
             default:
                 break;
         }
-        error("expected expression, got '" + t.getLexeme() + "'");
+        errorExpected("expression");
         return advanceLeaf();
     }
 
@@ -503,24 +507,29 @@ public class Parser {
 
     private ParseNode expectLeaf(TokenType type, String description) {
         if (current().getType() == type) return advanceLeaf();
-        error("expected " + description + ", got '" + current().getLexeme() + "'");
+        errorExpected(description);
         return new ParseNode("<missing " + description + ">");
     }
 
     private ParseNode expectLeaf(TokenType type, String lexeme, String description) {
         if (check(type, lexeme)) return advanceLeaf();
-        error("expected " + description + ", got '" + current().getLexeme() + "'");
+        errorExpected(description);
         return new ParseNode("<missing " + description + ">");
     }
 
     private ParseNode expectKeywordLeaf(String kw) {
         if (check(TokenType.KEYWORD, kw)) return advanceLeaf();
-        error("expected '" + kw + "', got '" + current().getLexeme() + "'");
+        errorExpected("'" + kw + "'");
         return new ParseNode("<missing '" + kw + "'>");
     }
 
-    private void error(String message) {
-        errors.add("Line " + current().getLine() + ": " + message);
+    private void errorExpected(String expected) {
+        errorHandler.addExpected(expected, current());
+        recover();
+    }
+
+    private void errorInvalid() {
+        errorHandler.addInvalid(current());
         recover();
     }
 
