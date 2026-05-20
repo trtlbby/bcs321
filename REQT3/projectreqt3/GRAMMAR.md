@@ -54,6 +54,8 @@ statement ::= ";"
             | exprStatement
 ```
 
+The standalone `;` form above is an empty statement. Lua statements in this parser do not require semicolons as terminators.
+
 ```ebnf
 localDecl ::= "local" "function" IDENTIFIER "(" paramList ")" block "end"
             | "local" IDENTIFIER [ "=" expression ]
@@ -200,6 +202,7 @@ unaryOp ::= "-" | "not"
 5. The expression rules reflect the parser's precedence-climbing structure.
 6. Binary operator chains are parsed left-to-right by loop-based methods. That means `..` and `^` are documented here exactly as implemented, even though their associativity differs from standard Lua.
 7. Assignment targets are documented as `prefixExpr` because that is what the parser accepts syntactically; the parser does not enforce Lua l-value restrictions at this stage.
+8. Syntax errors are reported with line number, expected construct, found lexeme, and found token type through the parser's error handler.
 
 ## Traceability to Parser Methods
 
