@@ -27,7 +27,7 @@ Supported high-level constructs:
 Recognized lexically but not parsed as statements:
 - `break`
 - `goto`
-- `for ... in ...`
+- generic `for ... in ...` loops
 
 ## Entry Point
 
@@ -101,24 +101,22 @@ callStmt ::= callPrefix
 ```ebnf
 prefixExpr ::= IDENTIFIER { suffix }
 
-suffix ::= "." IDENTIFIER
-         | "[" expression "]"
-         | ":" IDENTIFIER "(" argList ")"
-         | "(" argList ")"
-```
+suffix ::= fieldSuffix
+         | indexSuffix
+         | callSuffix
 
-The implementation treats a prefix expression as a callable form only when at least one call-style suffix appears:
-either `("...`)` or `:name(...)`.
+fieldSuffix ::= "." IDENTIFIER
 
-```ebnf
-callPrefix ::= IDENTIFIER { nonCallSuffix } callSuffix { suffix }
-
-nonCallSuffix ::= "." IDENTIFIER
-                | "[" expression "]"
+indexSuffix ::= "[" expression "]"
 
 callSuffix ::= ":" IDENTIFIER "(" argList ")"
              | "(" argList ")"
+
+callPrefix ::= IDENTIFIER { suffix } callSuffix
 ```
+
+The implementation treats a prefix expression as a callable statement only when its final suffix is a call-style suffix:
+either `(...)` or `:name(...)`.
 
 ```ebnf
 argList ::= [ expression { "," expression } ]
@@ -196,10 +194,12 @@ unaryOp ::= "-" | "not"
 ## Implementation Notes
 
 1. This is the grammar of the current parser implementation, not the full Lua language.
-2. `exprStatement` is written as `assignStmt | callStmt` for clarity. In code, the parser first reads a `prefixExpr` and then decides whether it is an assignment or a function-call statement.
+2. `exprStatement` is written as `assignStmt | callStmt` for clarity. In code, the parser first reads a `prefixExpr`, then checks for `=`, and otherwise accepts the statement only when the final parsed suffix is a call suffix.
 3. `block` termination is parser-controlled by sentinel keywords rather than by a separate grammar file.
 4. Table constructors currently support expression lists such as `{1, 2, 3}` but not key-value fields such as `{x = 1}`.
 5. The expression rules reflect the parser's precedence-climbing structure.
+6. Binary operator chains are parsed left-to-right by loop-based methods. That means `..` and `^` are documented here exactly as implemented, even though their associativity differs from standard Lua.
+7. Assignment targets are documented as `prefixExpr` because that is what the parser accepts syntactically; the parser does not enforce Lua l-value restrictions at this stage.
 
 ## Traceability to Parser Methods
 
